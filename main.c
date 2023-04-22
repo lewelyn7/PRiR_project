@@ -1,132 +1,307 @@
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include "omp.h"
 #include <time.h>
-#include <omp.h>
 
-void present_result(int mode, int size, int k, int result, double time){
-    printf("Mode: %d size: %d %dth biggest number is:  %d took: %f\r\n", mode, size, k, result, time);
+
+void present_result(int mode, long  size, long  k, int result, double time){
+    FILE *filePointer ;
+    filePointer = fopen("results.csv", "a") ;
+    if ( filePointer == NULL )
+    {
+        printf( "results file failed to open");
+    }
+    else
+    {
+         
+        fprintf(filePointer, "%d;%ld;%ld;%d;%f\r\n", mode, size, k, result, time);
+        fclose(filePointer) ;
+    }
+    printf("Mode: %d size: %ld %ldth biggest number is:  %d took: %f\r\n", mode, size, k, result, time);
+}
+long  simplepartition(int a[], long  low, long  high) {
+	int tmp;
+
+	int pivot = a[low + rand() % (high - low + 1)];
+
+	while (low < high) {
+		while (a[low] < pivot)
+			low++;
+
+		while (a[high] > pivot)
+			high--;
+
+		if (a[low] == a[high])
+			low++;
+		else if (low < high) {
+			tmp = a[low];
+			a[low] = a[high];
+			a[high] = tmp;
+		}
+	}
+
+	return high;
 }
 
-void swap(int *a, int *b) {
-    int temp = *a;
-    *a = *b;
-    *b = temp;
-}
-// https://github.com/abignoli/parallel-quickselect/blob/master/src/parqselect.hpp
+int quickselect(int a[], long  low, long  index_to_select,
+		long  high) {
+	long  pivot_position, smaller_than_pivot_count;
 
-int partition(int arr[], int low, int high) {
-    int pivot = arr[high];
-    int i = low - 1;
+	if ( low == high )
+		return a[low];
+	pivot_position = simplepartition(a, low, high);
 
-    for (int j = low; j <= high - 1; j++) {
-        if (arr[j] > pivot) {
-            i++;
-            swap(&arr[i], &arr[j]);
-        }
-    }
-    swap(&arr[i + 1], &arr[high]);
-    return (i + 1);
-}
-struct bounds{
-    int down;
-    int up;
-};
-int quickselect(int arr[], int size, int low, int high, int k, int threads) {
-    int * p_indexes = allocate_array(threads);
-    struct bounds * bounds_arr = malloc(threads * sizeof(struct bounds));
-    for(int i=0; i<threads; i++){
-		bounds_arr[i].down = low + i * size / threads;
-		bounds_arr[i].up = i < threads - 1 ? low + (i+1) * size / threads - 1 : high;
-    }
-    for(int i=0; i<threads; i++){
-        p_indexes[i] = partition(arr, low, high);
-    }
-    if (low == high) {
-        return arr[low];
-    }
-    int pi = partition(arr, low, high);
-    int rank = pi - low + 1;
+	smaller_than_pivot_count = pivot_position - low;
 
-    if (k == rank) {
-        return arr[pi];
-    } else if (k < rank) {
-        return quickselect(arr, low, pi - 1, k);
-    } else {
-        return quickselect(arr, pi + 1, high, k - rank);
-    }
+	if (smaller_than_pivot_count == index_to_select)
+		return a[pivot_position];
+	else if (index_to_select < smaller_than_pivot_count)
+		return quickselect(a, low, index_to_select, pivot_position - 1);
+	else
+		return quickselect(a, pivot_position, index_to_select - smaller_than_pivot_count, high);
 }
 
-int* allocate_array(int n) {
+
+long  partition(int a[], long  low,  long  high, long  pivot) {
+	int tmp;
+	const int init_high=high;
+	while (low < high) {
+		while (a[low] < pivot && low < high)
+			low++;
+
+		if(low==high)
+			break;
+
+		while (a[high] > pivot && high > low)
+			high--;
+
+		if(low==high)
+			break;
+
+		if (a[low] == a[high])
+			low++;
+		else if (low < high) {
+			tmp = a[low];
+			a[low] = a[high];
+			a[high] = tmp;
+		}
+	}
+
+	if(high==init_high && a[high] < pivot) {
+		high++;
+	}
+
+	return high;
+}
+
+typedef struct bounds {
+	long  low;
+	long  high;
+} bounds;
+
+
+int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
+		long  high, const long  num_threads, bounds t_bounds[], long  p_indexes[]) {
+	long  pivot_position, smaller_than_pivot_count;
+	long  pivot;
+	long  i;
+	long  j,j_size;
+	long  k;
+	long  size = high-low+1;
+	long  pivot_index_on_current_partitions;
+	long  pivot_index;
+	long  accum;
+	long  cur_index;
+	long  t_max_size, max_size;
+	long  non_zero_count;
+	int all_partitions_size_one_fallback[num_threads];
+	const long  starting_low = low;
+
+	if(index_to_select >= size)
+		return -1;
+
+	if(num_threads*2>=size)
+		return quickselect(a, low, index_to_select, high);
+
+	for(i=0;i<num_threads;i++) {
+		t_bounds[i].low = low + i * size / num_threads;
+		t_bounds[i].high = i < num_threads - 1 ? low + (i+1) * size / num_threads - 1 : high;
+	}
+
+	while(1) {
+
+		pivot_index_on_current_partitions = rand() % size;
+		for(i=0,pivot_index=0;pivot_index_on_current_partitions >= 0; i++) 
+			pivot_index_on_current_partitions -= t_bounds[i].high - t_bounds[i].low + 1;
+		
+		i--;
+		pivot_index_on_current_partitions += t_bounds[i].high - t_bounds[i].low + 1;
+		pivot_index = t_bounds[i].low + pivot_index_on_current_partitions;
+		pivot = a[pivot_index];
+
+        #pragma omp parallel for schedule(static,1)
+		for(i=0;i<num_threads;i++)
+			p_indexes[i]=partition(a, t_bounds[i].low, t_bounds[i].high, pivot);
+
+
+		smaller_than_pivot_count = 0;
+		for(i=0;i<num_threads;i++)
+			smaller_than_pivot_count+=p_indexes[i]-t_bounds[i].low;
+
+		if(smaller_than_pivot_count == index_to_select)
+			break;
+
+		if(index_to_select < smaller_than_pivot_count) {
+			for(i=0;i<num_threads;i++) {
+				if(p_indexes[i] != 0)
+					t_bounds[i].high = p_indexes[i] - 1;
+				else
+					t_bounds[i].low = t_bounds[i].high+1;
+			}
+
+		} else {
+			for(i=0;i<num_threads;i++)
+				t_bounds[i].low = p_indexes[i];
+		}
+
+		size = 0;
+		for(i=0;i<num_threads;i++) 
+			if(t_bounds[i].high >= t_bounds[i].low)
+				size += t_bounds[i].high - t_bounds[i].low + 1;
+		
+
+		if(index_to_select > smaller_than_pivot_count)
+			index_to_select -= smaller_than_pivot_count;
+
+		if(num_threads>=size) {
+			for(j=0,k=0; j < num_threads; j++) {
+				for(i= t_bounds[j].low; i <= t_bounds[j].high; i++) {
+					all_partitions_size_one_fallback[k] = a[i];
+					k++;
+				}
+			}
+			return quickselect(all_partitions_size_one_fallback, 0, index_to_select, size-1);
+		}
+
+		for(i=0;i<num_threads;i++)
+			if(t_bounds[i].high < t_bounds[i].low) {
+
+				max_size=0;
+				t_max_size=i;
+				non_zero_count=0;
+				for(j=0; j < num_threads; j++) {
+					if(t_bounds[j].high > t_bounds[j].low) {
+						j_size = t_bounds[j].high - t_bounds[j].low + 1;
+						if(max_size<j_size) {
+							max_size = j_size;
+							t_max_size = j;
+						}
+					}
+				}
+
+				j=t_max_size;
+				if(i<j) {
+					t_bounds[i].low = t_bounds[j].low;
+					t_bounds[i].high = (t_bounds[j].high + t_bounds[j].low) / 2;
+					t_bounds[j].low = t_bounds[i].high+1;
+				} else {
+					t_bounds[i].high = t_bounds[j].high;
+					t_bounds[j].high = (t_bounds[j].high + t_bounds[j].low) / 2;
+					t_bounds[i].low = t_bounds[j].high+1;
+				}
+			}
+	}
+
+	return pivot;
+}
+
+int* allocate_array(long  n) {
     int* arr = (int*) malloc(n * sizeof(int));
     return arr;
 }
-void fill_random(int * arr, int n){
-    for(int i = 0; i < n; i++){
+void fill_random(int * arr, long  n){
+    for(long  i = 0; i < n; i++){
         arr[i] = rand();
     }
 }
-
-
 int cmpfunc (const void * a, const void * b) {
    return ( *(int*)a - *(int*)b );
 }
-int find_k_biggest_serial(int * arr, int size, int k){
+int find_k_biggest_serial(int * arr, long  size, long  k){
     qsort(arr, size, sizeof(int), cmpfunc);
     return arr[size-k];
 }
+int parallel_quickselect(int a[], long  low, long  index_to_select,
+		long  high, long  num_threads) {
+	bounds *t_bounds;
+	long  *p_indexes;
+	int result;
 
-int calc_parallel(int * arr, int size, int k){
+	t_bounds = malloc(sizeof(bounds) * num_threads);
+	p_indexes = malloc(sizeof(long ) * num_threads);
+	result = parallel_quickselect_no_alloc(a, low, index_to_select,
+			high, num_threads, t_bounds,p_indexes);
+
+    free(t_bounds);
+    free(p_indexes);
+
+	return result;
+}
+
+
+int calc_parallel(int * arr, long  size, long  k){
     double start_time, end_time;
     start_time =  omp_get_wtime();
     int parallel_result = 0;
-    #pragma omp parallel shared(parallel_result)
-    {
-        #pragma omp single nowait
-        {
-            parallel_result = quickselect(arr, 0, size-1, k);
-        }
-    }
+
+    parallel_result = parallel_quickselect(arr, 0, size-k, size-1, 8);
+
     end_time =  omp_get_wtime();
     present_result(2, size, k, parallel_result, end_time - start_time);
     return parallel_result;
 }
 
-int calc_single(int * arr, int size, int k){
+int calc_single(int * arr, long  size, long  k){
     double start_time, end_time;
     start_time =  omp_get_wtime();
-    int simple_result = quickselect(arr, 0, size-1, k);
+    long  simple_result = parallel_quickselect(arr, 0, size-k, size-1, 1);
     end_time = omp_get_wtime();
     present_result(1, size, k, simple_result, end_time - start_time);
     return simple_result;
 }
 
-int calc_check(int * arr, int size, int k){
+int calc_check(int * arr, long  size, long  k){
     double start_time, end_time;
     start_time =  omp_get_wtime();
-    int check_result = find_k_biggest_serial(arr, size, k);
+    long  check_result = find_k_biggest_serial(arr, size, k);
     end_time =  omp_get_wtime();
     present_result(0, size, k, check_result, end_time - start_time);
     return check_result;
 }
 
 
-void copy_array(int * arr_source, int * arr_dest, int size){
-    for(int i = 0; i < size; i++){
+
+void copy_array(int * arr_source, int * arr_dest, long  size){
+    for(long  i = 0; i < size; i++){
         arr_dest[i] = arr_source[i];
     }
 }
-int main() {
+int main(int argc, char ** argv) {
     srand(time(NULL));
-    int n = 10000000; // size of the array
-    int k = 50; // find the kth biggest number
+	if(argc != 2){
+		printf("wrong arguments");
+		exit(-1);
+	}
+    long  n = atol(argv[1]); // size of the array
+    long  k = 345; // find the kth biggest number
     int threads = 8;
     int * main_arr;
     int * working_arr;
     int single_result, parallel_result, check_result;
 
-
     main_arr = allocate_array(n);
     fill_random(main_arr, n);
+
     omp_set_num_threads(threads);
 
     working_arr = allocate_array(n);
@@ -141,7 +316,7 @@ int main() {
 
     working_arr = allocate_array(n);
     copy_array(main_arr, working_arr, n);
-    check_result = calc_check(working_arr, n, k);
+    // check_result = calc_check(working_arr, n, k);
     free(working_arr);
 
 
