@@ -1,0 +1,2 @@
+Intel(R) Core(TM) i7-7700HQ CPU @ 2.80GHz
+16GB RAM

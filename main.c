@@ -4,7 +4,7 @@
 #include <time.h>
 
 
-void present_result(int mode, long  size, long  k, int result, double time){
+void present_result(int mode, int threads, long  size, long  k, int result, double time){
     FILE *filePointer ;
     filePointer = fopen("results.csv", "a") ;
     if ( filePointer == NULL )
@@ -14,10 +14,10 @@ void present_result(int mode, long  size, long  k, int result, double time){
     else
     {
          
-        fprintf(filePointer, "%d;%ld;%ld;%d;%f\r\n", mode, size, k, result, time);
+        fprintf(filePointer, "%d;%d;%ld;%ld;%d;%f\r\n", mode, threads, size, k, result, time);
         fclose(filePointer) ;
     }
-    printf("Mode: %d size: %ld %ldth biggest number is:  %d took: %f\r\n", mode, size, k, result, time);
+    printf("Mode: %d threads: %d size: %ld %ldth biggest number is:  %d took: %f\r\n", mode, threads, size, k, result, time);
 }
 long  simplepartition(int a[], long  low, long  high) {
 	int tmp;
@@ -139,7 +139,7 @@ int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
 		pivot_index = t_bounds[i].low + pivot_index_on_current_partitions;
 		pivot = a[pivot_index];
 
-        #pragma omp parallel for schedule(static,1)
+        #pragma omp parallelfor schedule(static,1)
 		for(i=0;i<num_threads;i++)
 			p_indexes[i]=partition(a, t_bounds[i].low, t_bounds[i].high, pivot);
 
@@ -249,7 +249,7 @@ int parallel_quickselect(int a[], long  low, long  index_to_select,
 }
 
 
-int calc_parallel(int * arr, long  size, long  k){
+int calc_parallel(int * arr, long  size, long  k, int threads){
     double start_time, end_time;
     start_time =  omp_get_wtime();
     int parallel_result = 0;
@@ -257,25 +257,25 @@ int calc_parallel(int * arr, long  size, long  k){
     parallel_result = parallel_quickselect(arr, 0, size-k, size-1, 8);
 
     end_time =  omp_get_wtime();
-    present_result(2, size, k, parallel_result, end_time - start_time);
+    present_result(2, threads, size, k, parallel_result, end_time - start_time);
     return parallel_result;
 }
 
-int calc_single(int * arr, long  size, long  k){
+int calc_single(int * arr, long  size, long k, int threads){
     double start_time, end_time;
     start_time =  omp_get_wtime();
     long  simple_result = parallel_quickselect(arr, 0, size-k, size-1, 1);
     end_time = omp_get_wtime();
-    present_result(1, size, k, simple_result, end_time - start_time);
+    present_result(1, threads, size, k, simple_result, end_time - start_time);
     return simple_result;
 }
 
-int calc_check(int * arr, long  size, long  k){
+int calc_check(int * arr, long  size, long  k, int threads){
     double start_time, end_time;
     start_time =  omp_get_wtime();
     long  check_result = find_k_biggest_serial(arr, size, k);
     end_time =  omp_get_wtime();
-    present_result(0, size, k, check_result, end_time - start_time);
+    present_result(0, threads, size, k, check_result, end_time - start_time);
     return check_result;
 }
 
@@ -288,13 +288,13 @@ void copy_array(int * arr_source, int * arr_dest, long  size){
 }
 int main(int argc, char ** argv) {
     srand(time(NULL));
-	if(argc != 2){
+	if(argc != 3){
 		printf("wrong arguments");
 		exit(-1);
 	}
     long  n = atol(argv[1]); // size of the array
     long  k = 345; // find the kth biggest number
-    int threads = 8;
+    int threads = atoi(argv[2]);
     int * main_arr;
     int * working_arr;
     int single_result, parallel_result, check_result;
@@ -306,17 +306,17 @@ int main(int argc, char ** argv) {
 
     working_arr = allocate_array(n);
     copy_array(main_arr, working_arr, n);
-    single_result = calc_single(working_arr, n, k);
+    single_result = calc_single(working_arr, n, k, threads);
     free(working_arr);
 
     working_arr = allocate_array(n);
     copy_array(main_arr, working_arr, n);
-    parallel_result = calc_parallel(working_arr, n, k);
+    parallel_result = calc_parallel(working_arr, n, k, threads);
     free(working_arr);
 
     working_arr = allocate_array(n);
     copy_array(main_arr, working_arr, n);
-    // check_result = calc_check(working_arr, n, k);
+    // check_result = calc_check(working_arr, n, k, threads);
     free(working_arr);
 
 
