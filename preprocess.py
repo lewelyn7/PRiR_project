@@ -17,6 +17,7 @@ one_thread_value = data.loc[biggest_size].loc[2]['simple']
 # for speedup chart, take the biggest size and print time for 1,2,4,8 threads
 only_big_parallel = data.loc[biggest_size].drop(columns=['simple'])
 only_big_parallel = pd.concat([only_big_parallel, pd.DataFrame([{"parallel": one_thread_value}], index=[1])])
+only_big_parallel.index.rename("threads", inplace=True)
 only_big_parallel.sort_index(inplace=True)
 only_big_parallel.to_csv("results_speedup.csv")
 
