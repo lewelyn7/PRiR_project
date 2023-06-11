@@ -1,15 +1,10 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -fopenmp
-LDFLAGS = -fopenmp
-EXEC = main
+EXECS=mpi_hello_world
+MPICC?=mpicc
 
-all: $(EXEC)
+all: ${EXECS}
 
-$(EXEC): main.o
-	$(CC) $(LDFLAGS) -o $@ $^
-
-main.o: main.c
-	$(CC) $(CFLAGS) -c $<
+mpi_parallel_qselect: mpi_parallel_qselect.c
+    ${MPICC} -o mpi_parallel_qselect mpi_parallel_qselect.c
 
 clean:
-	rm -f $(EXEC) *.o
+    rm ${EXECS}
