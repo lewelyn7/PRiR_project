@@ -2,3 +2,5 @@ main.o
 .vscode
 main
 main_stare.c
+main_mpi
+main_hybrid
