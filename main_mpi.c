@@ -330,6 +330,7 @@ void worker(int rank, int * thread_buffer, int thread_buffer_size){
         // printf("%d: recieved pivot: %ld\r\n", rank, pivot); 
         MPI_Recv(thread_buffer, thread_buffer_size, MPI_INT, 0, 1, MPI_COMM_WORLD, &mpi_status);
         MPI_Get_count(&mpi_status, MPI_INT, &count);
+
         // printf("%d: recieved elements: %d\r\n", rank, count); 
         
         long p_index = partition(thread_buffer, 0, count-1, pivot);

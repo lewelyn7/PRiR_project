@@ -110,7 +110,7 @@ void print_arr(int * a, int size){
 }
 
 int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
-		long  high, const long  num_threads, bounds t_bounds[], long  p_indexes[], int * thread_buffer, int thread_buffer_size) {
+		long  high, const long  num_threads, bounds t_bounds[], long  p_indexes[], int * thread_buffer, int thread_buffer_size, int omp_threads) {
 	long  pivot_position, smaller_than_pivot_count;
 	long  pivot;
 	long  i;
@@ -126,6 +126,8 @@ int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
 	int all_partitions_size_one_fallback[num_threads];
 	const long  starting_low = low;
     MPI_Status mpi_status;
+	
+	num_threads = num_threads * omp_threads
 
 	if(index_to_select >= size)
 		return -1;
@@ -149,26 +151,35 @@ int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
 		pivot_index = t_bounds[i].low + pivot_index_on_current_partitions;
 		pivot = a[pivot_index];
 
-		for(int i=1;i<num_threads;i++){
-            int bound_size = t_bounds[i].high - t_bounds[i].low + 1;
-            MPI_Send(&pivot, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
-            MPI_Send(a+t_bounds[i].low, bound_size, MPI_INT, i, 1, MPI_COMM_WORLD);
+		for(int i=1;i<num_threads/omp_threads;i++){
+			for(int j=0; j < omp_threads; j++){
+				int id = i + j;
+				int bound_size = t_bounds[id].high - t_bounds[id].low + 1;
+				MPI_Send(&pivot, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
+				MPI_Send(a+t_bounds[id].low, bound_size, MPI_INT, i, 1, MPI_COMM_WORLD);
+			}
         }
-        p_indexes[0]=partition(a, t_bounds[0].low, t_bounds[0].high, pivot);
-		for(int i=1;i<num_threads;i++){
-            long rec_p_index;
-            MPI_Recv(&rec_p_index, 1, MPI_LONG, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &mpi_status);
-            mpi_source = mpi_status.MPI_SOURCE;
-            rec_p_index += t_bounds[mpi_source].low;
-            p_indexes[mpi_source] = rec_p_index;
 
-            int bound_size = t_bounds[mpi_source].high - t_bounds[mpi_source].low + 1;
-            MPI_Recv(thread_buffer, thread_buffer_size, MPI_INT, mpi_source, 3, MPI_COMM_WORLD, &mpi_status);
-            // printf("0: bounds: %d %d \r\n", t_bounds[0].low, t_bounds[0].high);
-            for(long j = 0; j < bound_size; j++){
-                a[j+t_bounds[mpi_source].low] = thread_buffer[j];
-            }
-            print_arr(a, size);
+        #pragma omp parallelfor schedule(static,1)
+		for(i=0;i<omp_threads;i++)
+			p_indexes[i]=partition(a, t_bounds[i].low, t_bounds[i].high, pivot);
+
+		for(int i=1;i<num_threads/omp_threads;i++){
+			for(int k = 0; k < omp_threads; k++){
+				long rec_p_index;
+				MPI_Recv(&rec_p_index, 1, MPI_LONG, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &mpi_status);
+				mpi_source = mpi_status.MPI_SOURCE;
+				rec_p_index += t_bounds[mpi_source+k].low;
+				p_indexes[mpi_source+k] = rec_p_index;
+
+				int bound_size = t_bounds[mpi_source+k].high - t_bounds[mpi_source+k].low + 1;
+				MPI_Recv(thread_buffer, thread_buffer_size, MPI_INT, mpi_source, 3, MPI_COMM_WORLD, &mpi_status);
+				// printf("0: bounds: %d %d \r\n", t_bounds[0].low, t_bounds[0].high);
+				for(long j = 0; j < bound_size; j++){
+					a[j+t_bounds[mpi_source+k].low] = thread_buffer[j];
+				}
+				print_arr(a, size);
+			}
         }
 
 
@@ -178,7 +189,7 @@ int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
 
 		if(smaller_than_pivot_count == index_to_select){
             long finalizer = LONG_MAX;
-            for(int i = 1; i < num_threads; i++){
+            for(int i = 1; i < num_threads/omp_threads; i++){
                 MPI_Send(&finalizer, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
             }
 			break;
@@ -214,7 +225,7 @@ int parallel_quickselect_no_alloc(int a[], long  low, long  index_to_select,
 				}
 			}
             long finalizer = LONG_MAX;
-            for(int i = 1; i < num_threads; i++){
+            for(int i = 1; i < num_threads/omp_threads; i++){
                 MPI_Send(&finalizer, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
             }
 			return quickselect(all_partitions_size_one_fallback, 0, index_to_select, size-1);
@@ -317,8 +328,12 @@ int calc_check(int * arr, long  size, long  k, int threads){
     return check_result;
 }
 
-void worker(int rank, int * thread_buffer, int thread_buffer_size){
+void worker(int rank, int * thread_buffer, int thread_buffer_size, int omp_threads){
     MPI_Status mpi_status; 
+	//
+	// TODO allocate thread buffer 2d array
+	// 
+	p_indexes = malloc(sizeof(long ) * omp_threads);
     int count;
     long pivot;
     while(1){
@@ -328,11 +343,18 @@ void worker(int rank, int * thread_buffer, int thread_buffer_size){
             return;
         }
         // printf("%d: recieved pivot: %ld\r\n", rank, pivot); 
+		for(int i = 0; i < omp_threads; i++){
+			
+		}
         MPI_Recv(thread_buffer, thread_buffer_size, MPI_INT, 0, 1, MPI_COMM_WORLD, &mpi_status);
         MPI_Get_count(&mpi_status, MPI_INT, &count);
         // printf("%d: recieved elements: %d\r\n", rank, count); 
         
-        long p_index = partition(thread_buffer, 0, count-1, pivot);
+
+        #pragma omp parallelfor schedule(static,1)
+		for(i=0;i<omp_threads;i++)
+			p_indexes[i]=partition(a, t_bounds[i].low, t_bounds[i].high, pivot);
+	
         MPI_Send(&p_index, 1, MPI_LONG, 0, 2, MPI_COMM_WORLD);
         MPI_Send(thread_buffer, count, MPI_INT, 0, 3, MPI_COMM_WORLD);
     }
@@ -352,10 +374,12 @@ int main(int argc, char ** argv) {
 	}
     long  n = atol(argv[1]); // size of the array
     int threads = atoi(argv[2]);
-    long  k = atoi(argv[3]); // find the kth biggest number
-	if (n % threads != 0)
+    int omp_threads = atoi(argv[3]);
+	int processing_units = threads * omp_threads;
+    long  k = atoi(argv[4]); // find the kth biggest number
+	if (n % processing_units != 0)
 	{
-		n -= n % threads;
+		n -= n % processing_units;
 	}
     int * main_arr;
     int * working_arr;
@@ -369,26 +393,27 @@ int main(int argc, char ** argv) {
 
     omp_set_num_threads(threads);
 
-	int thread_buffer_size = n / threads;
-	int *thread_buffer = allocate_array(thread_buffer_size);
+	int pu_buffer_size = n / processing_units;
+	int *thread_buffer;
     MPI_Barrier(MPI_COMM_WORLD);
     if(rank == 0){
+		thread_buffer = allocate_array(thread_buffer_size);
         main_arr = allocate_array(n);
         fill_random(main_arr, n);
     }
     if(rank == 0){
         working_arr = allocate_array(n);
         copy_array(main_arr, working_arr, n);
-        single_result = calc_single(working_arr, n, k, threads, thread_buffer, thread_buffer_size);
+        single_result = calc_single(working_arr, n, k, threads, thread_buffer, pu_buffer_size);
         free(working_arr);
     }
     if(rank == 0){
         working_arr = allocate_array(n);
         copy_array(main_arr, working_arr, n);
-        parallel_result = calc_parallel(working_arr, n, k, threads, thread_buffer, thread_buffer_size);
+        parallel_result = calc_parallel(working_arr, n, k, threads, thread_buffer, pu_buffer_size);
         free(working_arr);
     }else{
-        worker(rank, thread_buffer, thread_buffer_size);
+        worker(rank, thread_buffer, pu_buffer_size);
     }
 
     // working_arr = allocate_array(n);
